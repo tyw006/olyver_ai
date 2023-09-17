@@ -33,7 +33,7 @@ import numpy as np
 import random
 import matplotlib.pyplot as plt
 import os
-import json
+import math
 # %matplotlib inline
 # %%
 videoPath = 'Li Dayin 180kg Snatch WR  216kg Clean&Jerk  2023 AWC in Jinju.mp4'
@@ -145,7 +145,7 @@ cfg_obj.DATASETS.TEST = ("barbell_test", )
 cfg_obj.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.7   # set the testing threshold for this model
 # predictor = DefaultPredictor(cfg_obj)
 barbell_metadata = MetadataCatalog.get("barbell_test")
-
+# I believe box for object is top left corner, bottom right corner
 # from detectron2.utils.visualizer import ColorMode
 # import glob
 # this code is for showing all images in test folder with predictions drawn over it
@@ -186,60 +186,72 @@ def detect(videoPath):
   video = cv2.VideoCapture(videoPath)
   fps = round(video.get(cv2.CAP_PROP_FPS)) # frame rate in video
   num_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT)) # number of frames in video
-
-  def lift_startend(find_start=False):
-    global frame_num
-    predictor = DefaultPredictor(cfg_obj)
-    # iterate through video every second
-    if find_start:
-      start_frame = 0
+  pred_obj = DefaultPredictor(cfg_obj)
+  pred_keypt = DefaultPredictor(cfg_key)
+  def lift_detector(start_frame, end_frame, find_start=False, find_max_y=False):
+    """ Function to help find the frame where the lift starts, ends, 
+        and max height of the bar during the lift."""
+    if find_max_y:
+      range_frames=range(start_frame, end_frame)
     else:
-      start_frame = frame_num
-    range_frames = range(start_frame, num_frames, fps)
+      # iterate through video every second
+      range_frames = range(start_frame, end_frame, fps)
     for i, frame_num in enumerate(range_frames):
-      #print(frame_num)
       # obtain frame
       video.set(cv2.CAP_PROP_POS_FRAMES, frame_num) #0-based index of the frame to be decoded/captured next.
       ret, frame = video.read()
       # make predictions
-      outputs = predictor(frame)
-      # filter out lifter by size of bounding box. only need to do it once(For now)
+      outputs = pred_obj(frame)
+      # filtering by largest bounding box, which should mean object detected is closest to camera
+      idx_max = outputs['instances'].pred_boxes.area().cpu().argmax().tolist()
       if i == 0:
-        # keypoint detection only looks for humans, so don't need to filter out other objects
-        # filtering by largest bounding box, which should mean object detected is closest to camera
-        idx_max = outputs['instances'].pred_boxes.area().cpu().argmax().tolist()
+        # getting y1, which is top left corner of bounding box
         y1 = outputs['instances'].pred_boxes[[idx_max]].tensor.cpu().numpy()[0][1]
-        frame_start = frame_num
+        # get height to pixel value for weightlifting plate after start of lift is known
+        if ~find_start:
+          top_y_pixels = outputs['instances'].pred_boxes[[idx_max]].tensor.cpu().numpy()[0][1]
+          bottom_y_pixels = outputs['instances'].pred_boxes[[idx_max]].tensor.cpu().numpy()[0][3]
+          # global the variable for usage when calculating velocity later
+          global height_to_pixel_meters
+          # (meters) / pixels
+          height_to_pixel_meters = (17.72/39.37) / (bottom_y_pixels - top_y_pixels)
       instances = outputs['instances']
       pred_boxes1 = instances.pred_boxes[[idx_max]]
-      # start of the lift would be where y-coordinates change drastically
-      #print(pred_boxes1)
+      # get new y
       y1_new = pred_boxes1.tensor.cpu().numpy()[0][1]
-      pct_change = (y1_new - y1) / y1
-      # if y1 decreases more than 20%(object moves upwards), then we found our starting point
-      if (pct_change < -0.2) & find_start: 
-        # start should be previous value
-        return y1, frame_prev, idx_max
-      # once bar is starting to drop, found our end point
-      elif (pct_change > 0) & ~find_start:
-        # want to return the current frame, not previous frame for end
-        return y1, frame_prev
+      if find_max_y:
+        # if new y1 higher above prev y1, update y1 and frame
+        if y1_new < y1:
+          y1 = y1_new
+          frame_prev = frame_num
+        # if new y1 is lower than prev y1, then weight is moving down and we found frame of max y during lift
+        elif y1_new > y1:
+          return frame_prev
       else:
-        # set new y and frame start
-        y1 = y1_new
-        frame_prev = frame_num
-  y1_start, lift_start, idx_max = lift_startend(find_start=True)
-  y1_end, lift_end = lift_startend()
-
+        # start of the lift would be where y-coordinates change drastically
+        pct_change = (y1_new - y1) / y1
+        # if y1 decreases more than 20%(object moves upwards), then we found our starting point
+        if (pct_change < -0.2) & find_start: 
+          # start should be previous value
+          return frame_prev
+        # once bar is starting to drop, found our end point
+        elif (pct_change > 0) & ~find_start:
+          # want to return the current frame, not previous frame for end
+          return frame_prev
+        else:
+          # set new y and frame start
+          y1 = y1_new
+          frame_prev = frame_num
+  lift_start_frame= lift_detector(0, num_frames, find_start=True)
+  lift_end_frame = lift_detector(lift_start_frame, num_frames)
+  foi = {'lift_start': lift_start_frame, 'lift_end_frame': lift_end_frame}
   def lift_segmenter():
-    predictor = DefaultPredictor(cfg_key)
-    foi = {}
-    for i, frame_num in enumerate(range(lift_start,lift_end)):
+    for frame_num in range(lift_start_frame,lift_end_frame):
       # obtain frame
       video.set(cv2.CAP_PROP_POS_FRAMES, frame_num) #0-based index of the frame to be decoded/captured next.
       ret, frame = video.read()
       # make predictions
-      outputs = predictor(frame)
+      outputs = pred_keypt(frame)
       # keypoint detection only looks for humans, so don't need to filter out other objects
       # filtering by largest bounding box, which should mean object detected is closest to camera
       idx_max = outputs['instances'].pred_boxes.area().cpu().argmax().tolist()
@@ -249,7 +261,7 @@ def detect(videoPath):
       pred_classes1 = instances.pred_classes[[idx_max]]
       pred_keypoints1 = instances.pred_keypoints[[idx_max]]
       #pred_keypoints_heatmaps1 = instances.pred_keypoint_heatmaps[[idx_max]]
-      # Set new instances
+      # Set new instances for only one human
       outputs1 = detectron2.structures.Instances(image_size=(height, width))
       outputs1.set('pred_boxes', pred_boxes1)
       outputs1.set('scores', pred_scores1)
@@ -315,7 +327,8 @@ def detect(videoPath):
             ankle = np.array(keypts[16][:2])
           leg_degree = keypoint_degree(hip, knee, ankle)
         continue
-      if ('initial_pull' in foi) & ('power_position' in foi) & ('catch' not in foi):
+      # last position to detect, just need other two positions to be known
+      if ('initial_pull' in foi) & ('power_position' in foi):
         left_hipkneeankle_score = [keypts[11][2], keypts[13][2], keypts[15][2]]
         left_score = np.average(left_hipkneeankle_score)
         right_hipkneeankle_score = [keypts[12][2], keypts[14][2], keypts[16][2]]
@@ -336,22 +349,79 @@ def detect(videoPath):
         leg_degree_new = keypoint_degree(hip, knee, ankle)
         if leg_degree_new < leg_degree:
           leg_degree = leg_degree_new
-          # foi['catch'] = frame_num
-          print(frame_num, ' -- ', 'leg_degree: ', str(leg_degree))
-      #v = Visualizer(frame[:, :, ::-1], keypoint_metadata, scale=1.2)
-      #out = v.draw_instance_predictions(outputs1.to("cpu"))
-      #cv2.imwrite(f'frames/{frame_num}.jpg', out.get_image())
-      #   out = cv2.cvtColor(out.get_image()[:, :, ::-1], cv2.COLOR_BGR2RGB)
-      #   plt.imshow(out)
-      #   plt.show()
+          foi['catch'] = frame_num
     return foi
   frames_of_interest = lift_segmenter()
+  frames_of_interest['max_bar_height'] = lift_detector(frames_of_interest['power_position'],
+                                                       frames_of_interest['catch'],
+                                                       find_max_y=True)
   print(frames_of_interest)
-  #return outputs_list
-  # output_file = open('keypoint_outputs', 'w', encoding='utf-8')
-  # for dic in outputs_list:
-  #     json.dump(dic, output_file) 
-  #     output_file.write("\n")
+  def xy_coord(point):
+        # obtain frame
+        frame = frames_of_interest[point]
+        video.set(cv2.CAP_PROP_POS_FRAMES, frame) #0-based index of the frame to be decoded/captured next.
+        ret, frame = video.read()
+        # make predictions
+        outputs = pred_obj(frame)
+        # find top 2 largest boxes, these should be the plates closest to the camera
+        val, indices = outputs['instances'].pred_boxes.area().cpu().topk(2)
+        indices = indices.tolist()
+        pred_boxes1 = outputs['instances'].pred_boxes[indices]
+        # not all predicted bounding boxes for the same object are the same size.
+        #print(point, ' area:', pred_boxes1.area())
+        # Bounding box coordinates are [x1, y1, x2, y2]. (x1,y1) is top left corner, (x2,y2) bottom right corner
+        # Objects may get detected in different orders, so will separate based on x,y values. Large x-value is left
+        # Using bottom right point as it has less risk of moving out of frame
+        x2_0 = pred_boxes1.tensor.cpu().numpy()[0][2]
+        x2_1 = pred_boxes1.tensor.cpu().numpy()[1][2]
+        if x2_0 > x2_1:
+          left_plate_xy = pred_boxes1.tensor.cpu().numpy()[0][2:]
+          right_plate_xy = pred_boxes1.tensor.cpu().numpy()[1][2:]
+        elif x2_0 < x2_1:
+          left_plate_xy = pred_boxes1.tensor.cpu().numpy()[0][2:]
+          right_plate_xy = pred_boxes1.tensor.cpu().numpy()[1][2:]
+        return left_plate_xy, right_plate_xy
+  def lift_velocity(frames_of_interest):
+    lift_points = ['lift_start','initial_pull','power_position', 'max_bar_height','catch','lift_end_frame']
+    velocities = {}
+    for point1, point2 in zip(lift_points, lift_points[1::]):
+      pt1_left_xy, pt1_right_xy = xy_coord(point1)
+      pt2_left_xy, pt2_right_xy = xy_coord(point2)
+      # find degree of motion(not needed)
+      # radians_left = math.atan2(pt2_left_xy[1] - pt1_left_xy[1], pt2_left_xy[0] - pt1_left_xy[0])
+      # degrees_left = math.degrees(radians_left)
+      # radians_right = math.atan2(pt2_right_xy[1] - pt1_right_xy[1], pt2_right_xy[0] - pt1_right_xy[0])
+      # degrees_right = math.degrees(radians_right)
+      # calculate time
+      time_s = (frames_of_interest[point2] - frames_of_interest[point1]) / frames_per_second
+      # calculate velocity components for left and right weightlifting plates
+      vx_left = (pt2_left_xy[0] - pt1_left_xy[0]) / time_s * height_to_pixel_meters # pixels/s * meters/pixels
+      vy_left = (pt2_left_xy[1] - pt1_left_xy[1]) / time_s * height_to_pixel_meters
+      vx_right = (pt2_right_xy[0] - pt1_right_xy[0]) / time_s * height_to_pixel_meters
+      vy_right = (pt2_right_xy[1] - pt1_right_xy[1]) / time_s * height_to_pixel_meters
+      # velocity is sqrt of sum of velocity components squared
+      v_tot_left= math.sqrt(vx_left**2 + vy_left**2) # velocity is in meters/s
+      v_tot_right = math.sqrt(vx_right**2 + vy_right**2)
+      # average velocities from left and right plates to get approximate velocity in m/s
+      velocities[point1 + '_to_' + point2] = round(np.mean([v_tot_left, v_tot_right]), 2)
+      # need to calculate max y before catch
+    return velocities
+  velocities = lift_velocity(frames_of_interest)
+  print(velocities)
+  def image_writer(predictor, metadata, frame_of_interest, directory, custom_prefix):
+    # obtain frame
+      video.set(cv2.CAP_PROP_POS_FRAMES, frame_of_interest) #0-based index of the frame to be decoded/captured next.
+      ret, frame = video.read()
+      # make predictions
+      outputs = predictor(frame)
+      v = Visualizer(frame[:, :, ::-1], metadata, scale=1.2)
+      out = v.draw_instance_predictions(outputs['instances'].to("cpu"))
+      cv2.imwrite(f'{directory}/{custom_prefix}_{frame_of_interest}.jpg', out.get_image())
+  for point in frames_of_interest.keys():
+    image_writer(pred_obj, MetadataCatalog.get("barbell_train"),
+                 frames_of_interest[point], 'barbell_frames', point)
+    # write object and keypoint bounding boxes to video if possible
+    # next steps: get max bar height, get bar height during catch, calculate hook, form recommendations
 #%%
 outputs = detect(videoPath)
 # %% Keypoint indices
