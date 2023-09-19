@@ -24,12 +24,13 @@ from detectron2.utils.video_visualizer import VideoVisualizer
 from detectron2.config import get_cfg
 from detectron2.data import MetadataCatalog, DatasetCatalog, build_detection_test_loader
 from detectron2.utils.visualizer import ColorMode, Visualizer
+from detectron2.structures import Boxes
 from detectron2 import model_zoo
 # from PIL import Image 
 # import PIL 
 import cv2
 import numpy as np
-# import tqdm
+import tqdm
 import random
 import matplotlib.pyplot as plt
 import os
@@ -37,16 +38,6 @@ import math
 # %matplotlib inline
 # %%
 videoPath = 'Li Dayin 180kg Snatch WR  216kg Clean&Jerk  2023 AWC in Jinju.mp4'
-video = cv2.VideoCapture(videoPath) # opens video file from specified path
-width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH)) # width of frames in video stream
-height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT)) #height of frames in video stream
-frames_per_second = video.get(cv2.CAP_PROP_FPS) # frames rate in video
-num_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT)) # number of frames in video
-print('width:', width)
-print('height:', height)
-print('num_frames:', num_frames)
-print('fps:', frames_per_second)
-fourcc = cv2.VideoWriter_fourcc(*'MP4V') # 4-byte code used to specify the video codec
 #%%
 # Downloading custom barbell dataset
 #!pip install roboflow --user
@@ -172,7 +163,10 @@ cfg_key.merge_from_file(model_zoo.get_config_file("COCO-Keypoints/keypoint_rcnn_
 cfg_key.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x.yaml") # returns the URL to the model trained using the given config
 cfg_key.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.7 # threshold to filter out low-scored bounding boxes
 cfg_key.MODEL.DEVICE = 'cuda'  # cpu or cuda
-keypoint_metadata = MetadataCatalog.get(cfg_key.DATASETS.TRAIN[0])
+# getting metadata for keypoint detection and deleting thing_classes to set to custom
+metadata = MetadataCatalog.get(cfg_key.DATASETS.TRAIN[0]); del metadata.thing_classes
+# keypoint detection person is 0 and weights are 1, so setting custom labels to lifter and weights
+metadata.thing_classes = ['lifter','weights']
 #%% 
 def keypoint_degree(a,b,c):
   ba = a - b
@@ -184,6 +178,8 @@ def keypoint_degree(a,b,c):
 def detect(videoPath):
   # get video and FPS
   video = cv2.VideoCapture(videoPath)
+  width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH)) # width of frames in video stream
+  height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT)) #height of frames in video stream
   fps = round(video.get(cv2.CAP_PROP_FPS)) # frame rate in video
   num_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT)) # number of frames in video
   pred_obj = DefaultPredictor(cfg_obj)
@@ -215,10 +211,10 @@ def detect(videoPath):
           global height_to_pixel_meters
           # (meters) / pixels
           height_to_pixel_meters = (17.72/39.37) / (bottom_y_pixels - top_y_pixels)
-      instances = outputs['instances']
-      pred_boxes1 = instances.pred_boxes[[idx_max]]
+      pred_boxes1 = outputs['instances'].pred_boxes[[idx_max]]
       # get new y
       y1_new = pred_boxes1.tensor.cpu().numpy()[0][1]
+      # finding frame with max bar height before the catch
       if find_max_y:
         # if new y1 higher above prev y1, update y1 and frame
         if y1_new < y1:
@@ -245,6 +241,7 @@ def detect(videoPath):
   lift_start_frame= lift_detector(0, num_frames, find_start=True)
   lift_end_frame = lift_detector(lift_start_frame, num_frames)
   foi = {'lift_start': lift_start_frame, 'lift_end_frame': lift_end_frame}
+  foi_instances = {}
   def lift_segmenter():
     for frame_num in range(lift_start_frame,lift_end_frame):
       # obtain frame
@@ -255,18 +252,17 @@ def detect(videoPath):
       # keypoint detection only looks for humans, so don't need to filter out other objects
       # filtering by largest bounding box, which should mean object detected is closest to camera
       idx_max = outputs['instances'].pred_boxes.area().cpu().argmax().tolist()
-      instances = outputs['instances']
-      pred_boxes1 = instances.pred_boxes[[idx_max]]
-      pred_scores1 = instances.scores[[idx_max]]
-      pred_classes1 = instances.pred_classes[[idx_max]]
-      pred_keypoints1 = instances.pred_keypoints[[idx_max]]
-      #pred_keypoints_heatmaps1 = instances.pred_keypoint_heatmaps[[idx_max]]
+      pred_boxes1 = outputs['instances'].pred_boxes[[idx_max]]
+      pred_scores1 = outputs['instances'].scores[[idx_max]]
+      pred_classes1 = outputs['instances'].pred_classes[[idx_max]]
+      pred_keypoints1 = outputs['instances'].pred_keypoints[[idx_max]]
+      #pred_keypoints_heatmaps1 = outputs['instances']pred_keypoint_heatmaps[[idx_max]]
       # Set new instances for only one human
-      outputs1 = detectron2.structures.Instances(image_size=(height, width))
-      outputs1.set('pred_boxes', pred_boxes1)
-      outputs1.set('scores', pred_scores1)
-      outputs1.set('pred_classes', pred_classes1)
-      outputs1.set('pred_keypoints', pred_keypoints1)
+      new_instances = detectron2.structures.Instances(image_size=(height, width))
+      new_instances.set('pred_boxes', pred_boxes1)
+      new_instances.set('scores', pred_scores1)
+      new_instances.set('pred_classes', pred_classes1)
+      new_instances.set('pred_keypoints', pred_keypoints1)
       keypts = pred_keypoints1.cpu().numpy()[0]
       # find initial pull
       if 'initial_pull' not in foi:
@@ -288,6 +284,7 @@ def detect(videoPath):
         # when wrist goes above the knee, that's the end of the initial pull
         if wrist_y < knee_y:
           foi['initial_pull'] = frame_num
+          foi_instances['initial_pull'] = new_instances
         continue
       if ('initial_pull' in foi) & ('power_position' not in foi):
         left_wristhip_score = [keypts[9][2], keypts[11][2]]
@@ -381,6 +378,7 @@ def detect(videoPath):
           left_plate_xy = pred_boxes1.tensor.cpu().numpy()[0][2:]
           right_plate_xy = pred_boxes1.tensor.cpu().numpy()[1][2:]
         return left_plate_xy, right_plate_xy
+  # calculate xy_coordinate outside of loop to save from running the function multiple times
   def lift_velocity(frames_of_interest):
     lift_points = ['lift_start','initial_pull','power_position', 'max_bar_height','catch','lift_end_frame']
     velocities = {}
@@ -393,7 +391,7 @@ def detect(videoPath):
       # radians_right = math.atan2(pt2_right_xy[1] - pt1_right_xy[1], pt2_right_xy[0] - pt1_right_xy[0])
       # degrees_right = math.degrees(radians_right)
       # calculate time
-      time_s = (frames_of_interest[point2] - frames_of_interest[point1]) / frames_per_second
+      time_s = (frames_of_interest[point2] - frames_of_interest[point1]) / fps
       # calculate velocity components for left and right weightlifting plates
       vx_left = (pt2_left_xy[0] - pt1_left_xy[0]) / time_s * height_to_pixel_meters # pixels/s * meters/pixels
       vy_left = (pt2_left_xy[1] - pt1_left_xy[1]) / time_s * height_to_pixel_meters
@@ -408,8 +406,9 @@ def detect(videoPath):
     return velocities
   velocities = lift_velocity(frames_of_interest)
   print(velocities)
+  
   def image_writer(predictor, metadata, frame_of_interest, directory, custom_prefix):
-    # obtain frame
+      # obtain frame
       video.set(cv2.CAP_PROP_POS_FRAMES, frame_of_interest) #0-based index of the frame to be decoded/captured next.
       ret, frame = video.read()
       # make predictions
@@ -417,15 +416,56 @@ def detect(videoPath):
       v = Visualizer(frame[:, :, ::-1], metadata, scale=1.2)
       out = v.draw_instance_predictions(outputs['instances'].to("cpu"))
       cv2.imwrite(f'{directory}/{custom_prefix}_{frame_of_interest}.jpg', out.get_image())
-  for point in frames_of_interest.keys():
-    image_writer(pred_obj, MetadataCatalog.get("barbell_train"),
-                 frames_of_interest[point], 'barbell_frames', point)
+  # for point in frames_of_interest.keys():
+  #   image_writer(pred_obj, MetadataCatalog.get("barbell_train"),
+  #                frames_of_interest[point], 'barbell_frames', point)
+  # initializing videowriter
+  fourcc = cv2.VideoWriter_fourcc(*'mp4v') # 4-byte code used to specify the video codec
+  video_writer = cv2.VideoWriter("test_video/output.mp4", fourcc, fps=float(fps), frameSize=(width, height), isColor=True)
+  v = VideoVisualizer(metadata, ColorMode.IMAGE)
+  def video_analyzer(video):
+    for n_frame in range(lift_start_frame, lift_end_frame):
+      # obtain frame
+      video.set(cv2.CAP_PROP_POS_FRAMES, n_frame) #0-based index of the frame to be decoded/captured next.
+      ret, frame = video.read()
+      # make predictions
+      outputs_key = pred_keypt(frame)
+      idx_max = outputs_key['instances'].pred_boxes.area().cpu().argmax().tolist()
+      pred_boxes_key = outputs_key['instances'].pred_boxes[[idx_max]]
+      pred_scores_key = outputs_key['instances'].scores[[idx_max]]
+      pred_classes_key = outputs_key['instances'].pred_classes[[idx_max]]
+      pred_keypoints = outputs_key['instances'].pred_keypoints[[idx_max]]
+      #pred_keypoints_heatmaps = outputs['instances'].pred_keypoint_heatmaps[[idx_max]]
+      outputs_obj = pred_obj(frame)
+      # find top 2 largest boxes, these should be the plates closest to the camera
+      val, indices = outputs_obj['instances'].pred_boxes.area().cpu().topk(2)
+      pred_boxes_obj = outputs_obj['instances'].pred_boxes[[indices]]
+      pred_scores_obj = outputs_obj['instances'].scores[[indices]]
+      pred_classes_obj = outputs_obj['instances'].pred_classes[[indices]]
+      # Set new instances for lifter and weight
+      new_instances = detectron2.structures.Instances(image_size=(height, width))
+      new_instances.set('pred_boxes', Boxes.cat([pred_boxes_key, pred_boxes_obj]))
+      new_instances.set('scores', torch.cat([pred_scores_key, pred_scores_obj]))
+      new_instances.set('pred_classes', torch.cat([pred_classes_key, pred_classes_obj]))
+      new_instances.set('pred_keypoints', torch.cat([pred_keypoints, pred_keypoints, pred_keypoints]))
+      # Make sure the frame is colored
+      frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+      visualization = v.draw_instance_predictions(frame, new_instances.to("cpu"))
+      # Convert Matplotlib RGB format to OpenCV BGR format
+      visualization = cv2.cvtColor(visualization.get_image(), cv2.COLOR_RGB2BGR)
+      cv2.imwrite(f'test_video/{n_frame}.jpg', visualization)
+      video_writer.write(visualization)
+    video.release()
+    video_writer.release()
+    cv2.destroyAllWindows()
+  video_analyzer(video)
     # write object and keypoint bounding boxes to video if possible
     # next steps: get max bar height, get bar height during catch, calculate hook, form recommendations
+    # use weightlifting plate with most consistent bounding box area through out all positiosn of the lift to calculate items
 #%%
 outputs = detect(videoPath)
 # %% Keypoint indices
-keypoint_names = keypoint_metadata.keypoint_names
+keypoint_names = metadata.keypoint_names
 keypoint_names.index('nose')
 # "keypoints": [
 # "nose",
