@@ -182,11 +182,15 @@ def detect(videoPath):
   height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT)) #height of frames in video stream
   fps = round(video.get(cv2.CAP_PROP_FPS)) # frame rate in video
   num_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT)) # number of frames in video
+  # initializing videowriter
+  fourcc = cv2.VideoWriter_fourcc(*'mp4v') # 4-byte code used to specify the video codec
+  video_writer = cv2.VideoWriter("test_video/output.mp4", fourcc, fps=float(fps), frameSize=(width, height), isColor=True)
+  v = VideoVisualizer(metadata, ColorMode.IMAGE)
   pred_obj = DefaultPredictor(cfg_obj)
   pred_keypt = DefaultPredictor(cfg_key)
-  def lift_detector(start_frame, end_frame, find_start=False, find_max_y=False):
+  def lift_finder(start_frame, end_frame, find_start=False, find_max_y=False):
     """ Function to help find the frame where the lift starts, ends, 
-        and max height of the bar during the lift."""
+        and max height of the bar during the lift. Uses object detection."""
     if find_max_y:
       range_frames=range(start_frame, end_frame)
     else:
@@ -238,8 +242,8 @@ def detect(videoPath):
           # set new y and frame start
           y1 = y1_new
           frame_prev = frame_num
-  lift_start_frame= lift_detector(0, num_frames, find_start=True)
-  lift_end_frame = lift_detector(lift_start_frame, num_frames)
+  lift_start_frame= lift_finder(0, num_frames, find_start=True)
+  lift_end_frame = lift_finder(lift_start_frame, num_frames)
   foi = {'lift_start': lift_start_frame, 'lift_end_frame': lift_end_frame}
   foi_instances = {}
   def lift_segmenter():
@@ -349,59 +353,70 @@ def detect(videoPath):
           foi['catch'] = frame_num
     return foi
   frames_of_interest = lift_segmenter()
-  frames_of_interest['max_bar_height'] = lift_detector(frames_of_interest['power_position'],
+  frames_of_interest['max_bar_height'] = lift_finder(frames_of_interest['power_position'],
                                                        frames_of_interest['catch'],
                                                        find_max_y=True)
   print(frames_of_interest)
-  def xy_coord(point):
-        # obtain frame
-        frame = frames_of_interest[point]
-        video.set(cv2.CAP_PROP_POS_FRAMES, frame) #0-based index of the frame to be decoded/captured next.
-        ret, frame = video.read()
-        # make predictions
-        outputs = pred_obj(frame)
-        # find top 2 largest boxes, these should be the plates closest to the camera
-        val, indices = outputs['instances'].pred_boxes.area().cpu().topk(2)
-        indices = indices.tolist()
-        pred_boxes1 = outputs['instances'].pred_boxes[indices]
-        # not all predicted bounding boxes for the same object are the same size.
-        #print(point, ' area:', pred_boxes1.area())
-        # Bounding box coordinates are [x1, y1, x2, y2]. (x1,y1) is top left corner, (x2,y2) bottom right corner
-        # Objects may get detected in different orders, so will separate based on x,y values. Large x-value is left
-        # Using bottom right point as it has less risk of moving out of frame
-        x2_0 = pred_boxes1.tensor.cpu().numpy()[0][2]
-        x2_1 = pred_boxes1.tensor.cpu().numpy()[1][2]
-        if x2_0 > x2_1:
-          left_plate_xy = pred_boxes1.tensor.cpu().numpy()[0][2:]
-          right_plate_xy = pred_boxes1.tensor.cpu().numpy()[1][2:]
-        elif x2_0 < x2_1:
-          left_plate_xy = pred_boxes1.tensor.cpu().numpy()[0][2:]
-          right_plate_xy = pred_boxes1.tensor.cpu().numpy()[1][2:]
-        return left_plate_xy, right_plate_xy
+  def xy_coord(frames_of_interest):
+        frame_coordinates_left = {}
+        frame_coordinates_right = {}
+        left_plate_area = []
+        right_plate_area = []
+        # determining which plate bounding box is more consistent based on area of bounding box
+        for point, frame in frames_of_interest.items():
+          # obtain frame
+          video.set(cv2.CAP_PROP_POS_FRAMES, frame) #0-based index of the frame to be decoded/captured next.
+          ret, frame = video.read()
+          # make predictions
+          outputs = pred_obj(frame)
+          # find top 2 largest boxes, these should be the plates closest to the camera
+          box_areas, indices = outputs['instances'].pred_boxes.area().cpu().topk(2)
+          indices = indices.tolist()
+          pred_boxes1 = outputs['instances'].pred_boxes[indices]
+          # not all predicted bounding boxes for the same object are the same size.
+          #print(point, ' area:', pred_boxes1.area())
+          # Bounding box coordinates are [x1, y1, x2, y2]. (x1,y1) is top left corner, (x2,y2) bottom right corner
+          # Objects may get detected in different orders, so will separate based on x,y values. Larger x-value is right
+          # Using bottom right point as it has less risk of moving out of frame
+          x2_0 = pred_boxes1.tensor.cpu().numpy()[0][2] # first plate bottom right x
+          x2_1 = pred_boxes1.tensor.cpu().numpy()[1][2] # second plate bottom right x
+          if x2_0 < x2_1: # if first box is for the left plate
+            left_plate_xy = pred_boxes1.tensor.cpu().numpy()[0][2:]
+            right_plate_xy = pred_boxes1.tensor.cpu().numpy()[1][2:]
+            left_plate_area.append(box_areas.numpy()[0])
+            right_plate_area.append(box_areas.numpy()[1])
+          elif x2_0 > x2_1: # if first box is for the right plate
+            left_plate_xy = pred_boxes1.tensor.cpu().numpy()[1][2:]
+            right_plate_xy = pred_boxes1.tensor.cpu().numpy()[0][2:]
+            left_plate_area.append(box_areas.numpy()[1])
+            right_plate_area.append(box_areas.numpy()[0])
+          frame_coordinates_left[point] = left_plate_xy.tolist()
+          frame_coordinates_right[point] = right_plate_xy.tolist()
+        # keep the xy coordinates of the plate bounding box with the most consistent area in all the frames
+        if np.std(left_plate_area) <= np.std(right_plate_area):
+          return frame_coordinates_left
+        else:
+          return frame_coordinates_right
   # calculate xy_coordinate outside of loop to save from running the function multiple times
-  def lift_velocity(frames_of_interest):
+  frame_coordinates = xy_coord(frames_of_interest)
+  def lift_velocity(frames_coordinates):
     lift_points = ['lift_start','initial_pull','power_position', 'max_bar_height','catch','lift_end_frame']
     velocities = {}
     for point1, point2 in zip(lift_points, lift_points[1::]):
-      pt1_left_xy, pt1_right_xy = xy_coord(point1)
-      pt2_left_xy, pt2_right_xy = xy_coord(point2)
-      # find degree of motion(not needed)
-      # radians_left = math.atan2(pt2_left_xy[1] - pt1_left_xy[1], pt2_left_xy[0] - pt1_left_xy[0])
-      # degrees_left = math.degrees(radians_left)
-      # radians_right = math.atan2(pt2_right_xy[1] - pt1_right_xy[1], pt2_right_xy[0] - pt1_right_xy[0])
-      # degrees_right = math.degrees(radians_right)
+      x_pt1, y_pt1 = frame_coordinates[point1]
+      x_pt2, y_pt2 = frame_coordinates[point2]
+      # find degree of motion(not needed yet)
+      # radians= math.atan2(y_pt2 - y_pt1, x_pt2 - x_pt1)
+      # degrees= math.degrees(radians_left)
       # calculate time
       time_s = (frames_of_interest[point2] - frames_of_interest[point1]) / fps
       # calculate velocity components for left and right weightlifting plates
-      vx_left = (pt2_left_xy[0] - pt1_left_xy[0]) / time_s * height_to_pixel_meters # pixels/s * meters/pixels
-      vy_left = (pt2_left_xy[1] - pt1_left_xy[1]) / time_s * height_to_pixel_meters
-      vx_right = (pt2_right_xy[0] - pt1_right_xy[0]) / time_s * height_to_pixel_meters
-      vy_right = (pt2_right_xy[1] - pt1_right_xy[1]) / time_s * height_to_pixel_meters
+      vx = (x_pt2 - x_pt1) / time_s * height_to_pixel_meters # pixels/s * meters/pixels
+      vy = (y_pt2 - y_pt1) / time_s * height_to_pixel_meters
       # velocity is sqrt of sum of velocity components squared
-      v_tot_left= math.sqrt(vx_left**2 + vy_left**2) # velocity is in meters/s
-      v_tot_right = math.sqrt(vx_right**2 + vy_right**2)
+      v_tot= math.sqrt(vx**2 + vy**2) # velocity is in meters/s
       # average velocities from left and right plates to get approximate velocity in m/s
-      velocities[point1 + '_to_' + point2] = round(np.mean([v_tot_left, v_tot_right]), 2)
+      velocities[point1 + '_to_' + point2] = round(np.mean([v_tot, v_tot]), 2)
       # need to calculate max y before catch
     return velocities
   velocities = lift_velocity(frames_of_interest)
@@ -419,11 +434,7 @@ def detect(videoPath):
   # for point in frames_of_interest.keys():
   #   image_writer(pred_obj, MetadataCatalog.get("barbell_train"),
   #                frames_of_interest[point], 'barbell_frames', point)
-  # initializing videowriter
-  fourcc = cv2.VideoWriter_fourcc(*'mp4v') # 4-byte code used to specify the video codec
-  video_writer = cv2.VideoWriter("test_video/output.mp4", fourcc, fps=float(fps), frameSize=(width, height), isColor=True)
-  v = VideoVisualizer(metadata, ColorMode.IMAGE)
-  def video_analyzer(video):
+  def video_writer(video):
     for n_frame in range(lift_start_frame, lift_end_frame):
       # obtain frame
       video.set(cv2.CAP_PROP_POS_FRAMES, n_frame) #0-based index of the frame to be decoded/captured next.
@@ -458,7 +469,7 @@ def detect(videoPath):
     video.release()
     video_writer.release()
     cv2.destroyAllWindows()
-  video_analyzer(video)
+  video_writer(video)
     # write object and keypoint bounding boxes to video if possible
     # next steps: get max bar height, get bar height during catch, calculate hook, form recommendations
     # use weightlifting plate with most consistent bounding box area through out all positiosn of the lift to calculate items
