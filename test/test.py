@@ -37,6 +37,8 @@ import random
 import matplotlib.pyplot as plt
 import os
 import math
+
+os.chdir('..')
 # %matplotlib inline
 # %%
 videoPath = 'test_video_lidayin.mp4'
@@ -82,19 +84,20 @@ cfg_obj.MODEL.ROI_HEADS.NUM_CLASSES = 2 # adjust for number of classes
 
 cfg_obj.TEST.EVAL_PERIOD = 500
 #%%
-run_train=False
+run_train=True
 if run_train:
   # Visualize training data
   barbell_train_metadata = MetadataCatalog.get("barbell_train")
   dataset_dicts = DatasetCatalog.get("barbell_train")
-
-  for d in random.sample(dataset_dicts, 3):
+  test_dicts = DatasetCatalog.get("barbell_test")
+  for d in test_dicts: #random.sample(test_dicts, 3):
       img = cv2.imread(d["file_name"])
       visualizer = Visualizer(img[:, :, ::-1], metadata=barbell_train_metadata, scale=0.5)
       vis = visualizer.draw_dataset_dict(d)
       cv2.imshow('barbell',vis.get_image()[:, :, ::-1])
       cv2.waitKey(0)
       cv2.destroyAllWindows()
+#%%
 if run_train:
   # Need to make sure out model validates against our validation set
   from detectron2.engine import DefaultTrainer
