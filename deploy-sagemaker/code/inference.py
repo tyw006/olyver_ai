@@ -1,5 +1,4 @@
 # This is default implementation of inference_handler: 
-
 # https://github.com/aws/sagemaker-pytorch-serving-container/blob/master/src/sagemaker_pytorch_serving_container/default_inference_handler.py
 # SM specs: https://sagemaker.readthedocs.io/en/stable/using_pytorch.html
 
