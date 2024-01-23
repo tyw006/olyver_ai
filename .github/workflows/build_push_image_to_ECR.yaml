@@ -4,8 +4,10 @@ name: Deploy to Amazon ECR
 
 on:
   push:
-    branches: [dev]
-    paths: 'deploy-sagemaker/**'
+    branches: 
+      -dev
+    paths: 
+      -'deploy-sagemaker/**'
 
 env:
   AWS_REGION: us-east-2
