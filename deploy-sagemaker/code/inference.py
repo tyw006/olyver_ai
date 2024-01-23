@@ -56,7 +56,6 @@ def _get_predictor(config_path, model_path):
     logger.info(f"Configured model weights from {model_path}")
     cfg.DATASETS.TEST = ("test", )
     cfg.MODEL.ROI_HEADS.NUM_CLASSES = 2 # 2 classes, lifter and plates
-    # cfg.MODEL.DEVICE = 'cpu'
 
     pred = DefaultPredictor(cfg)
     logger.info(cfg)
