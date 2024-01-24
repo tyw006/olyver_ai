@@ -3,6 +3,7 @@
 # This script shows how to build the Docker image and push it to ECR to be ready for use
 # by SageMaker.
 
+
 # There are 3 arguments in this script:
 #    - image - required, this will be used as the image on the local machine and combined with the account and region to form the repository name for ECR;
 #    - tag - optional, if provided, it will be used as ":tag" of your image; otherwise, ":latest" will be used;
