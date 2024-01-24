@@ -54,5 +54,5 @@ jobs:
         echo "start"
         ls
         pip install --upgrade --user awscli
-        build_and_push_image.sh sagemaker-d2-train-weightlifting latest Dockerfile.serving
+        ./build_and_push_image.sh sagemaker-d2-train-weightlifting latest Dockerfile.serving
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
