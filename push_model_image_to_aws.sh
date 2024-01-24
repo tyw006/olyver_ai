@@ -30,6 +30,6 @@ aws ecr get-login-password --region us-east-2 | docker login --username AWS --pa
 
 # Run build and push bash script. Takes 3 arguments: image name, image tag, dockerfile.
 cd ..
-source build_and_push_image.sh sagemaker-d2-train-weightlifting latest Dockerfile.serving
+source build_and_push_image.sh sagemaker-d2-train-weightlifting latest Dockerfile.serving us-east-2
 
 echo "Image pushed to ECR."

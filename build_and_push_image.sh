@@ -31,7 +31,7 @@ fi
 
 
 # Get the region defined in the current configuration (default to us-east-1 if none defined)
-region=$(aws configure get region)
+region=$4 #$(aws configure get region)
 
 echo "Working in region $region"
 
