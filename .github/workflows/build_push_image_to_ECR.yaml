@@ -1,0 +1,61 @@
+# This workflow will build and push a new container image to Amazon ECR
+
+name: Deploy to Amazon ECR
+
+on:
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'
+        required: true
+        default: 'debug'
+        type: choice
+        options:
+        - info
+        - warning
+        - debug
+        
+  pull_request:
+    branches:
+      -main
+
+env:
+  AWS_REGION: us-east-2
+
+permissions:
+      id-token: write
+      contents: read
+jobs:
+  build_image_push_to_ECR:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3 # This is so the worokflow will use this repository's code
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        # aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        # aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        role-to-assume: arn:aws:iam::187135372127:role/GitHubAction-AssumeRoleWithAction
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Build, tag, and push image to Amazon ECR
+      id: build-image
+      env:
+        ACCOUNT_ID: ${{secrets.AWS_ACCOUNT_ID }}
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: ${{ secrets.REPO_NAME }}
+        IMAGE_TAG: latest
+      run: |
+        echo "start"
+        ls
+        pip install --upgrade --user awscli
+        # Logging into docker & shared ECR repo. 
+        ./push_model_image_to_aws.sh
+        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
