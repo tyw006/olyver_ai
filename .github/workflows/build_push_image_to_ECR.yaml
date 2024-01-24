@@ -16,6 +16,8 @@ on:
         - debug
         
   push:
+    branches:
+      - dev
     paths: 
       - 'deploy-sagemaker/**' # will trigger when push to this path
 
