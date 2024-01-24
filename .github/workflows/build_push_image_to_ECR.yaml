@@ -15,12 +15,9 @@ on:
         - warning
         - debug
         
-  push:
+  pull_request:
     branches: 
       -dev
-    paths: 
-      -'deploy-sagemaker/**'
-
 env:
   AWS_REGION: us-east-2
 
@@ -59,10 +56,5 @@ jobs:
         ls
         pip install --upgrade --user awscli
         # Logging into docker & shared ECR repo. 
-        # Need to do this to get image from aws and push docker image to aws
-        echo "Logging into AWS Elastic Container Registry."
-        aws ecr get-login-password --region ${{env.AWS_REGION }}  | docker login --username AWS --password-stdin 763104351884.dkr.ecr.us-east-2.amazonaws.com
-        # logging into private ECR
-        aws ecr get-login-password --region ${{env.AWS_REGION }} | docker login --username AWS --password-stdin 187135372127.dkr.ecr.us-east-2.amazonaws.com
-        ./build_and_push_image.sh sagemaker-d2-serve-weightlifting latest Dockerfile.serving ${{env.AWS_REGION }} 
+        ./push_model_image_to_aws.sh
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
