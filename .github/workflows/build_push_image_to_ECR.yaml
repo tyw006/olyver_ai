@@ -24,6 +24,9 @@ on:
 env:
   AWS_REGION: us-east-2
 
+permissions:
+      id-token: write
+      contents: read
 jobs:
   build_image_push_to_ECR:
     runs-on: ubuntu-latest
@@ -33,10 +36,11 @@ jobs:
       uses: actions/checkout@v3 # This is so the worokflow will use this repository's code
 
     - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v1
+      uses: aws-actions/configure-aws-credentials@v4
       with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        # aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        # aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        role-to-assume: arn:aws:iam::187135372127:role/GitHubAction-AssumeRoleWithAction
         aws-region: ${{ env.AWS_REGION }}
 
     - name: Login to Amazon ECR
@@ -54,9 +58,5 @@ jobs:
         echo "start"
         ls
         pip install --upgrade --user awscli
-        echo "Logging into AWS Elastic Container Registry."
-        aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin 763104351884.dkr.ecr.us-east-2.amazonaws.com
-        # logging into private ECR
-        aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 187135372127.dkr.ecr.us-east-2.amazonaws.com
         ./build_and_push_image.sh sagemaker-d2-serve-weightlifting latest Dockerfile.serving us-east-2
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
