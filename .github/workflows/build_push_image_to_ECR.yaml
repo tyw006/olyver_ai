@@ -58,5 +58,5 @@ jobs:
         aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin 763104351884.dkr.ecr.us-east-2.amazonaws.com
         # logging into private ECR
         aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 187135372127.dkr.ecr.us-east-2.amazonaws.com
-        ./push_model_image_to_aws.sh
+        ./build_and_push_image.sh sagemaker-d2-serve-weightlifting latest Dockerfile.serving us-east-2
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
