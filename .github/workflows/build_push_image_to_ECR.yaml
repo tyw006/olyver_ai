@@ -15,12 +15,11 @@ on:
         - warning
         - debug
         
-  push:
-    branches:
-      - dev
-    paths: 
-      - 'deploy-sagemaker/**' # will trigger when push to this path
+  pull_request:
 
+  push:
+    paths:
+      - 'deploy-sagemaker/**' # will trigger when push to this path
 env:
   AWS_REGION: us-east-2
 
