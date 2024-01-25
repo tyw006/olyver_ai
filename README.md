@@ -1,5 +1,7 @@
 # olyver_ai
 
+<iframe width="768" height="432" src="https://miro.com/app/live-embed/uXjVN1-tm3Y=/?moveToViewport=-1350,-1365,6069,6539&embedId=875840246360" frameborder="0" scrolling="no" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
+
 Model is pre-trained locally and will be pushed to AWS along with the image required to run the model. 
 
 1. Run bash script push_model_image_to_aws.sh to push the model to s3 bucket and image to ECR. Only run if changes were made to the model.
