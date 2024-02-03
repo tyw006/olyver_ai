@@ -25,7 +25,8 @@ The application utilizes a locally trained Detectron2 model for olympic plate de
 
 2. **Analysis Results**: The application will process the uploaded video, displaying velocities for each segment of the lift. The results include metrics such as Initial Pull, Power Position, Max Bar Height, Catch, and Lift End.
 
-    ![Results](https://github.com/tyw006/olyver_ai/blob/main/images/app_output.png)
+    ![ResultsGIF](https://github.com/tyw006/olyver_ai/blob/main/images/output.gif)
+    ![Metrics](https://github.com/tyw006/olyver_ai/blob/main/images/output_metrics.png)
 
 3. **Monitoring Model**: An Airflow task scheduler is used to send test data to the endpoint on a periodic basis to monitor accuracy of the model. It is important to ensure that the model continues to detect the objects without any drift. The endpoint data is the sent to Arize for monitoring and visualization.
 
