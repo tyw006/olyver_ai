@@ -1,13 +1,56 @@
-# olyver_ai
+# Olympic Lifting Evaluator
 
-<iframe width="768" height="432" src="https://miro.com/app/live-embed/uXjVN1-tm3Y=/?moveToViewport=-1350,-1365,6069,6539&embedId=875840246360" frameborder="0" scrolling="no" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
+Olympic Lifting Evaluator is a computer vision application that analyzes Olympic lifting videos to calculate velocities for the barbell during different phases of the lift.
 
-Model is pre-trained locally and will be pushed to AWS along with the image required to run the model. 
+## Overview
 
-1. Run bash script push_model_image_to_aws.sh to push the model to s3 bucket and image to ECR. Only run if changes were made to the model.
+Olympic lifting is a highly technical movement that demands strength, speed, and explosive power. This application utilizes Detectron2 for both keypoint and object detection to measure the speed of the lift in various portions. The goal is to evaluate each lift in real-time, providing valuable insights and even coaching tips.
 
-2. Run "python deploy-realtime.py" to deploy the model on AWS Sagemaker. 
+The application utilizes a locally trained Detectron2 model for olympic plate detection. The model is then pushed and deployed to Amazon Web Services(S3, Sagemaker). A streamlit front end is used for user interfacing. Upon upload of a lifting video, a request will be sent through Amazon API Gateway, then Amazon Lambda, which will then invoke the endpoint of the model. The predictions are sent back to the application and displayed underneath the final video of the lifter with the detection overlayed. See overview diagram:
 
-3. Start streamlit application using "streamlit run app.py"
+![Diagram](https://github.com/tyw006/olyver_ai/blob/main/images/Technical%20Diagrams.jpg)
 
-4. When finished, run delete-endpoint.sh to remove the endpoint and save costs.st
+
+## Features
+
+- Key and object detection using Detectron2.
+- Calculation of velocities for different phases of the Olympic lift.
+- Supports mp4 video input format.
+
+## How to Use
+
+1. **Upload a Video**: Begin by uploading an MP4 file containing an Olympic lifting sequence. The application will automatically select the first lift that appears.
+
+    ![UploadImage](https://github.com/tyw006/olyver_ai/blob/main/images/app_input.png)
+
+2. **Analysis Results**: The application will process the uploaded video, displaying velocities for each segment of the lift. The results include metrics such as Initial Pull, Power Position, Max Bar Height, Catch, and Lift End.
+
+    ![Results](https://github.com/tyw006/olyver_ai/blob/main/images/app_output.png)
+
+3. **Monitoring Model**: An Airflow task scheduler is used to send test data to the endpoint on a periodic basis to monitor accuracy of the model. It is important to ensure that the model continues to detect the objects without any drift. The endpoint data is the sent to Arize for monitoring and visualization.
+
+    ![Monitoring](https://github.com/tyw006/olyver_ai/blob/main/images/ArizeMonitoring.png)
+
+## Getting Started
+
+Follow these steps to run the application locally:
+
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/your-username/olympic-lifting-evaluator.git
+2. Install dependencies:
+    ```bash
+    pip install -r requirements.txt
+3. Make sure model and image are pushed to S3 and ECR, respectively:
+    ```
+    bash push_model_image_to_aws.sh
+4. Deploy model on AWS Sagemaker:
+    ```
+    bash deploy-realtime.sh
+5. Start streamlit application:
+    ```
+    streamlit run app.py
+6. When finished, delete endpoint to save costs:
+    ```
+    bash delete-endpoint.sh
