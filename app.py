@@ -5,12 +5,12 @@ import base64
 import json
 import numpy as np
 from PIL import Image
-import torch
-from detectron2.structures import Instances, Boxes
 from detectron2.utils.visualizer import Visualizer
 from detectron2.data.datasets import register_coco_instances
 from detectron2.data.catalog import MetadataCatalog, DatasetCatalog
-from detectron2.utils.visualizer import ColorMode
+from olympic_detection import AWSDetector
+from olympic_detection import Detector
+from olympic_detection import json_to_d2
 import json 
 import os
 
@@ -24,34 +24,13 @@ if not 'test' in DatasetCatalog.list():
 cb_meta = MetadataCatalog.get(dataset_name); #del cb_meta.thing_classes
 MetadataCatalog.get('test').thing_classes = ['Lifter', 'Olympic Plate']
 
-def json_to_d2(pred_dict, device):
-    """ 
-    Client side helper function to deserialize the JSON msg back to d2 outputs 
-    """
-    
-    pred_dict = json.loads(pred_dict)
-    for k, v in pred_dict.items():
-        if k=="pred_boxes":
-            boxes_to_tensor = torch.FloatTensor(v).to(device)
-            pred_dict[k] = Boxes(boxes_to_tensor)
-        if k=="scores":
-            pred_dict[k] = torch.Tensor(v).to(device)
-        if k=="pred_classes":
-            pred_dict[k] = torch.Tensor(v).to(device).to(torch.uint8)
-    
-    height, width = pred_dict['image_size']
-    del pred_dict['image_size']
-
-    inst = Instances((height, width,), **pred_dict)
-    
-    return {'instances':inst}
-
 def process_uploaded_file(uploaded_file):
     # Check if a file is uploaded
     if uploaded_file is not None:
         file_type = uploaded_file.type.split('/')[0]
-        input_img = np.array(Image.open(uploaded_file))
+        # image capability was for testing functionality of model on AWS
         if file_type == 'image':
+            input_img = np.array(Image.open(uploaded_file))
             # Display the uploaded image
             st.image(uploaded_file, caption='Uploaded Image', use_column_width=True)
             # Uploaded Image should be a bytes type object. Need to convert to b64.
@@ -74,24 +53,46 @@ def process_uploaded_file(uploaded_file):
             image_final = cv2.cvtColor(out.get_image()[:, :, ::-1], cv2.COLOR_BGR2RGB)
             st.image(image_final, use_column_width=True)
         elif file_type == 'video':
-            # Display the uploaded video
-            st.video(uploaded_file)
-
-            # Process the video (you can add more video processing logic here)
-            # For simplicity, this example doesn't include video processing.
-
+            # For Local
+            if 'velocities' not in st.session_state:
+                st.session_state['velocities'] = Detector().video_detect(uploaded_file)
+                # For AWS
+                # st.session_state['velocities'] = AWSDetector().video_detect(uploaded_file)
+            st.subheader("Velocities per segment of the lift: \n")
+            col1, col2, col3, col4, col5 = st.columns(5)
+            col1.metric("Initial Pull", 
+                        f"{st.session_state.velocities['lift_start_to_initial_pull']} m/s")
+            col2.metric("Initial Pull to Power Position", 
+                        f"{st.session_state.velocities['initial_pull_to_power_position']} m/s")
+            col3.metric("Power Position to Max Bar Height", 
+                        f"{st.session_state.velocities['power_position_to_max_bar_height']} m/s")
+            col4.metric("Max Bar Height to Catch", 
+                        f"{st.session_state.velocities['max_bar_height_to_catch']} m/s")
+            col5.metric("Catch to Lift End", 
+                        f"{st.session_state.velocities['catch_to_lift_end']} m/s")
         else:
             st.warning("Unsupported file type. Please upload an image or video.")
 
 # Streamlit app
 def main():
-    st.title("File Uploader App")
+    st.set_page_config(layout='wide')
+    _col1, column, _col2 = st.columns([1, 5, 1])
+    with column:
+        st.title("Olympic Lifting Evaluator")
+        st.caption("Olympic lifting is a highly technical movement that requires strength, speed, and explosive power. "\
+                    "This application uses Detectron2 to use both keypoint and object detection to measure the speed \
+                        of the lift in each portion of the lift. The future goal of this application would be to evaluate "\
+                            "each of their lifts in real time, even including coaching tips.")
+        st.write('\n\n')
+        st.caption("Begin by uploading an mp4 file of a lift. The application will select the first lift that appears.")
+        # File uploader. Currently only accept video.
+        uploaded_file = st.file_uploader("Choose a file", type=["mp4",
+                                                                #"jpg", "jpeg", "png", "gif", "mp4"
+                                                                ]
+                                                                )
 
-    # File uploader
-    uploaded_file = st.file_uploader("Choose a file", type=["jpg", "jpeg", "png", "gif", "mp4"])
-
-    # Process the uploaded file
-    process_uploaded_file(uploaded_file)
+        # Process the uploaded file
+        process_uploaded_file(uploaded_file)
 
 if __name__ == "__main__":
     main()
